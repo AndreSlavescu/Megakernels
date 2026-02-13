@@ -121,14 +121,20 @@ def launch_server(config: ScriptConfig):
         print("Done killing server.")
 
 
-def go(config: ScriptConfig, client: OpenAI, n_in: int, n_out: int, batch_size: int):
+def go(
+    config: ScriptConfig,
+    client: OpenAI,
+    prompt: str,
+    n_out: int,
+    batch_size: int,
+):
     times = []
 
     for i in tqdm(range(config.num_warmup + config.num_iters)):
         start = time.time()
         resp = client.completions.create(
             model=config.model,
-            prompt=[0] * n_in,
+            prompt=prompt,
             max_tokens=n_out,
             temperature=config.temperature,
             n=batch_size,
@@ -143,8 +149,23 @@ def go(config: ScriptConfig, client: OpenAI, n_in: int, n_out: int, batch_size: 
     return mean(times), stdev(times)
 
 
+def make_prompt_string(tokenizer: AutoTokenizer, prompt_len: int) -> str:
+    """Build a text prompt that tokenizes to exactly prompt_len tokens (for backends that require string prompts)."""
+    dummy = "This is a benchmark prompt. "
+    tokens = tokenizer.encode(dummy, add_special_tokens=False)
+    if not tokens:
+        tokens = [1] * prompt_len
+    while len(tokens) < prompt_len:
+        tokens.extend(tokenizer.encode(dummy, add_special_tokens=False))
+    tokens = tokens[:prompt_len]
+    return tokenizer.decode(tokens)
+
+
 def main(config: ScriptConfig):
     print(f"Running with config: {config.to_dict()}")
+
+    tokenizer = AutoTokenizer.from_pretrained(config.model)
+    prompt_str = make_prompt_string(tokenizer, config.prompt_len)
 
     with launch_server(config):
         client = OpenAI(
@@ -155,7 +176,7 @@ def main(config: ScriptConfig):
         baseline_mean, baseline_stdev = go(
             config,
             client,
-            n_in=config.prompt_len,
+            prompt=prompt_str,
             n_out=1,
             batch_size=config.batch_size,
         )
@@ -163,7 +184,7 @@ def main(config: ScriptConfig):
         run_mean, run_stdev = go(
             config,
             client,
-            n_in=config.prompt_len,
+            prompt=prompt_str,
             n_out=config.output_len,
             batch_size=config.batch_size,
         )
